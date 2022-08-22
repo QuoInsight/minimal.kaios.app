@@ -156,7 +156,10 @@ function setNextAlarm(nextSeconds) {
   }
   
   var alrmTime = new Date(); alrmTime.setTime(nextTime);
-  var alrmRq = navigator.mozAlarms.add(alrmTime, 'honorTimezone',{"alrmTime":nextTime});
+  var alrmRq = navigator.mozAlarms.add(
+    alrmTime, 'honorTimezone',
+    {"alrmTime":nextTime, "lastInForeground":lastInForeground}
+  );
   alrmRq.onsuccess = function() {
     alrmId = this.result;
     console.log("added next alarm: "+alrmId);  
@@ -173,10 +176,13 @@ navigator.mozSetMessageHandler('alarm', function(mozAlarm){
   //showNotification('QuoInsight', 'time-triggered' );
   if (isThisAppInForeground) {
     lastInForeground = thisTime ;
-  } else if (
-    (thisTime-lastInForeground) > (skipRelaunchMinutes*60000) 
-  ) {
-    relaunchThisAppInForeground();
+  } else {
+    if (lastInForeground==0 && mozAlarm.data.lastInForeground) {
+      lastInForeground = mozAlarm.data.lastInForeground;
+    }
+    if ( (thisTime-lastInForeground) > (skipRelaunchMinutes*60000) ) {
+      relaunchThisAppInForeground();
+    }
   }
 
   div1.innerText  = 'alarm: ' + JSON.stringify(mozAlarm.data)
@@ -339,8 +345,8 @@ window.addEventListener("load", function() {
 
   document.addEventListener("visibilitychange", () => {
     isThisAppInForeground = (document.visibilityState=="visible");
-    if (isThisAppInForeground) lastInForeground = (new Date()).getTime();
   })
+  if (document.visibilityState=="visible") lastInForeground = (new Date()).getTime();
   
   btn1.addEventListener("click", function(){
     h1.innerHTML = (new Date()).toLocaleString();
@@ -383,17 +389,17 @@ return;
 
   btn0.addEventListener("click", function(){
     // https://w2d.bananahackers.net
-	if(window.MozActivity) {
+    if(window.MozActivity) {
       var act = new MozActivity({
        name: "configure", data: {target: "device",section: "developer"}
       });
-    } else if(window.WebActivity) { // KaiOS 3.0
-	  var act = new WebActivity(
-	    "configure", {target: "device",	section: "developer"}
-	  );
-	  act.start().catch(function(e){
-		window.alert('Cannot launch developer menu: ' + e);
-	  });
+    } else if (window.WebActivity) { // KaiOS 3.0
+      var act = new WebActivity(
+	      "configure", {target: "device",	section: "developer"}
+	    );
+	    act.start().catch(function(e){
+		    window.alert('Cannot launch developer menu: ' + e);
+	    });
     } else {
       window.alert('Please open the page from the device itself!');
     }    
