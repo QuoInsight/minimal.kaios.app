@@ -174,14 +174,16 @@ navigator.mozSetMessageHandler('alarm', function(mozAlarm){
   }
 
   //showNotification('QuoInsight', 'time-triggered' );
+  isThisAppInForeground = (document.visibilityState=="visible");
   if (isThisAppInForeground) {
-    lastInForeground = thisTime ;
+    lastInForeground = thisTime;
   } else {
     if (lastInForeground==0 && mozAlarm.data.lastInForeground) {
       lastInForeground = mozAlarm.data.lastInForeground;
     }
     if ( (thisTime-lastInForeground) > (skipRelaunchMinutes*60000) ) {
       relaunchThisAppInForeground();
+      lastInForeground = (new Date()).getTime();
     }
   }
 
