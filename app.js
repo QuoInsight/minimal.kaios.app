@@ -1,16 +1,22 @@
+var uuid = "-"; // window.location.hostname;
 var h1, txt1, btn1, btn9, div1;
 var lastNotification = 0;  
 var lastTrackerUpdate = 0;  
-var skipNotifyMinutes = 60;
-var maxIdleMinutes = 60;
-var repeatSeconds = 20;
+var skipNotifyMinutes = 30;
+var maxIdleMinutes = 90;
+var repeatSeconds = 30;
 var geoLocWatchId = 0;
 var watch = false;
+var isThisAppInForeground = false;
+var lastInForeground = 0;
+var skipRelaunchMinutes = 3;
+var inactiveSleepMinutes = 2;
+var nightSleepMinutes = 15;
 
 function showNotification(title, body) {
   //console.log("showNotification");
-  var thisTime = new Date();
-  if ( (thisTime.getTime()-lastNotification) < (skipNotifyMinutes*60000) ) return;
+  var thisTime = (new Date()).getTime();
+  if ( (thisTime-lastNotification) < (skipNotifyMinutes*60000) ) return;
   Notification.requestPermission().then(function(permission) {
     if (permission === 'granted') {
       if ('serviceWorker' in navigator) {
@@ -99,6 +105,23 @@ function updateMyData(name, value) {
   });
 }
 
+function relaunchThisAppInForeground() {
+  //showNotification('QuoInsight', 'go foreground..' );
+  var request = window.navigator.mozApps.getSelf();
+  // navigator.mozApps.mgmt.getAll() --> list all apps
+  request.onsuccess = function() {
+    if (request.result) {
+      request.result.launch();
+      lastInForeground = (new Date()).getTime();
+    } else {
+      console.log("Called from outside of an app");
+    }
+  };
+  request.onerror = function() {
+    console.log("Error: " + request.error.name);
+  };
+}
+
 var alrmId = -1;
 function cancelAllAlarms() {
   var alrmRq = navigator.mozAlarms.getAll();
@@ -119,19 +142,20 @@ function setNextAlarm(nextSeconds) {
     return;
   }
 
-  var thisTime = new Date();
-  var thisHour = thisTime.getHours();
+  var thisDateTime = new Date();
+  var thisTime = thisDateTime.getTime();
+  var thisHour = thisDateTime.getHours();
 
-  var nextTime = thisTime.getTime() + (nextSeconds*1000);
+  var nextTime = thisTime + (nextSeconds*1000);
   var inactiveTime = 1*60000;
-  if (  (thisTime.getTime()-lastTrackerUpdate) >= inactiveTime ) {
+  if (  (thisTime-lastTrackerUpdate) >= inactiveTime ) {
     // inactive/sleep time, more rest
-    nextTime = thisTime.getTime() + (
-      (thisHour<6||thisHour>18) ? (inactiveTime*5) : inactiveTime
+    nextTime = thisTime + 60000*(
+      (thisHour<6||thisHour>18) ? (nightSleepMinutes) : inactiveSleepMinutes
     );
   }
   
-  var alrmTime = thisTime; alrmTime.setTime(nextTime);
+  var alrmTime = new Date(); alrmTime.setTime(nextTime);
   var alrmRq = navigator.mozAlarms.add(alrmTime, 'honorTimezone',{"alrmTime":nextTime});
   alrmRq.onsuccess = function() {
     alrmId = this.result;
@@ -139,30 +163,41 @@ function setNextAlarm(nextSeconds) {
   };
 }
 navigator.mozSetMessageHandler('alarm', function(mozAlarm){
-  var thisTime = new Date();
-  if ( (mozAlarm.date.getTime()-thisTime.getTime()) > 2000 ) {
+  var thisDateTime = new Date();
+  var thisTime = thisDateTime.getTime();
+  if ( (mozAlarm.date.getTime()-thisTime) > 2000 ) {
     console.log("ignored alarm. triggered too early.");
     return;
   }
 
-  showNotification('QuoInsight', 'time-triggered' );
+  //showNotification('QuoInsight', 'time-triggered' );
+  if (isThisAppInForeground) {
+    lastInForeground = thisTime ;
+  } else if (
+    (thisTime-lastInForeground) > (skipRelaunchMinutes*60000) 
+  ) {
+    relaunchThisAppInForeground();
+  }
+
   div1.innerText  = 'alarm: ' + JSON.stringify(mozAlarm.data)
-       + ' ' + (new Date()).toLocaleString();
-  updateMyData("lastExecuteTime", (new Date()).toLocaleString());
+       + ' ' + thisDateTime.toLocaleString();
+  updateMyData("lastExecuteTime", thisDateTime.toLocaleString());
 
   if (!watch) getLocation(watch);  
-  if ( (thisTime.getTime()-lastTrackerUpdate) > (maxIdleMinutes*60000) ) {
+  if ( (thisTime-lastTrackerUpdate) > (maxIdleMinutes*60000) ) {
     updateTracker(-1,-1);
   }
   setNextAlarm(repeatSeconds);
 });
 
 function updateTracker(latitude,longitude) {
-  var thisTime = new Date();
-  if ( (thisTime.getTime()-lastTrackerUpdate) < (repeatSeconds*1000) ) return;
+  var thisTime = (new Date()).getTime();
+  if ( (thisTime-lastTrackerUpdate) < (repeatSeconds*1000) ) return;
 
   var url = "https://script.google.com/macros/s/.../exec";
-  var data = '"-","' + latitude + '","' + longitude + '","","",""';
+  var data = '"'+uuid+'%20%f0%9f%94%8b'+getBatteryLevel()+'%25",'
+    +'"'+ latitude + '","' + longitude + '",'
+    +'"","",""';
   url = url + "?insertDataRows=%5B%5B"+data+"%5D%5D";
   var request = new XMLHttpRequest({ mozSystem: true });
   request.open('get', url, true);
@@ -180,7 +215,7 @@ function updateTracker(latitude,longitude) {
   request.send();
   lastTrackerUpdate = (new Date()).getTime();
   updateMyData("lastTrackerUpdate", lastTrackerUpdate);
-  showNotification('QuoInsight', 'lastTrackerUpdate');
+  //showNotification('QuoInsight', 'lastTrackerUpdate');
 }
 
 function clearGeoLocWatch() {
@@ -221,7 +256,7 @@ function getLocation(watch) {
     clearGeoLocWatch();
     txt1.value = "start watchPosition() ..";
     geoLocWatchId = navigator.geolocation.watchPosition(function(p){
-      var thisTime = new Date();
+      var thisDateTime = new Date();
       var lat = p.coords.latitude;
       var lon = p.coords.longitude;
       //console.log("coordinate="+lat+","+lon);
@@ -233,7 +268,7 @@ function getLocation(watch) {
       navigator.getDataStores('myData').then(function(stores){
         myData.store = stores[0];
         myData.store.get("lastTrackerUpdate").then(function(obj){
-          if ( (thisTime.getTime()-obj) >= (repeatSeconds*1000) ) {
+          if ( (thisDateTime.getTime()-obj) >= (repeatSeconds*1000) ) {
             updateTracker(lat,lon);
           }
         }).catch(function(err){
@@ -265,69 +300,103 @@ function getLocation(watch) {
       timeout: (repeatSeconds-5)*1000 // default=Infinity !!
     });
 
+  }
+
 }
 
+function getBatteryLevel() {
+  /*
+  // https://developer.kaiostech.com/docs/api/web-apis/batterymanager/level/
+  navigator.getBattery().then(function(battery) {
+    var level = battery.level;
+  });
+  */
+  return Math.round(100*navigator.battery.level);
 }
 
 window.addEventListener("load", function() {
-  console.log("Hello 1!");
+  console.log("Hello "+uuid+"!");
+  //console.log("Battery Level: "+getBatteryLevel()+"%");
   registerSW();
 
   h1 = document.getElementById("h1");
   txt1 = document.getElementById("txt1");
+  btn0 = document.getElementById("btn0");
   btn1 = document.getElementById("btn1");
   btn9 = document.getElementById("btn9");
   div1 = document.getElementById("div1");
 
-  btn1.focus();
+  btn1.tabIndex = 1;
+  btn1.focus(); // will not work without tabIndex ?!
 
   navigator.getDataStores('myData').then(function(stores){
     myData.store = stores[0];
     myData.store.get("lastExecuteTime").then(function(obj){
       myData.lastExecuteTime = "*" + obj;
-      h1.innerHTML  = "lastExecuteTime: " + myData.lastExecuteTime;
+      h1.innerHTML  = uuid+" lastExecuteTime: " + myData.lastExecuteTime;
     });
   });
-  
-  btn1.addEventListener(
-      "click", function(){
-        h1.innerHTML = (new Date()).toLocaleString();
 
-        showNotification('QuoInsight', 'manual clicked' );
+  document.addEventListener("visibilitychange", () => {
+    isThisAppInForeground = (document.visibilityState=="visible");
+    if (isThisAppInForeground) lastInForeground = (new Date()).getTime();
+  })
+  
+  btn1.addEventListener("click", function(){
+    h1.innerHTML = (new Date()).toLocaleString();
+
+    //showNotification('QuoInsight', 'manual clicked' );
 return;
         
-        var request = new XMLHttpRequest({ mozSystem: true });
-        request.open('get', "http://192.168.43.1", true);
-        // We're setting some handlers here for dealing with both error and
-        // data received. We could just declare the functions here, but they are in
-        // separate functions so that search() is shorter, and more readable.
-        request.addEventListener('error', function(){
-          console.log("Error:"+request.error);
-        });  request.addEventListener('load', function(){
-          var response = request.response;
-          if (response === null) {
-            console.log("Error: response is null");
-            return;
-          }
-          console.log("Response Length: "+response.length);
-          div1.innerHTML  = response;          
-        });
-        request.send();
-
-        getLocation(watch);  
-      }
-  );
-
-  btn9.addEventListener("click", function(){
-      console.log("closing. ..");
-      cancelAllAlarms();
-      if ( !confirm("close?") ) {
-        setNextAlarm(repeatSeconds);
+    var request = new XMLHttpRequest({ mozSystem: true });
+    request.open('get', "http://192.168.43.1", true);
+    // We're setting some handlers here for dealing with both error and
+    // data received. We could just declare the functions here, but they are in
+    // separate functions so that search() is shorter, and more readable.
+    request.addEventListener('error', function(){
+      console.log("Error:"+request.error);
+    });  request.addEventListener('load', function(){
+      var response = request.response;
+      if (response === null) {
+        console.log("Error: response is null");
         return;
       }
-      //try { navigator.mozAlarms.remove(alrmId); } catch(e) {}
-      clearGeoLocWatch();
-      window.close();  
+      console.log("Response Length: "+response.length);
+      div1.innerHTML  = response;          
+    });
+    request.send();
+
+    getLocation(watch);  
+  });
+
+  btn9.addEventListener("click", function(){
+    console.log("closing. ..");
+    cancelAllAlarms();
+    if ( !confirm("close?") ) {
+      setNextAlarm(repeatSeconds);
+      return;
+    }
+    //try { navigator.mozAlarms.remove(alrmId); } catch(e) {}
+    clearGeoLocWatch();
+    window.close();  
+  });
+
+  btn0.addEventListener("click", function(){
+    // https://w2d.bananahackers.net
+	if(window.MozActivity) {
+      var act = new MozActivity({
+       name: "configure", data: {target: "device",section: "developer"}
+      });
+    } else if(window.WebActivity) { // KaiOS 3.0
+	  var act = new WebActivity(
+	    "configure", {target: "device",	section: "developer"}
+	  );
+	  act.start().catch(function(e){
+		window.alert('Cannot launch developer menu: ' + e);
+	  });
+    } else {
+      window.alert('Please open the page from the device itself!');
+    }    
   });
 
   cancelAllAlarms();
